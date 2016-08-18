@@ -1,0 +1,8 @@
+Gemfile.lock
+vendor/*
+.*.swp
+.*.swo
+.*/
+*.o
+*.so
+tags
