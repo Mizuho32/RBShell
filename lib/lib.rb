@@ -13,15 +13,21 @@ module Terminal
   extend self
 
   #%w[for while if end case when .. { } class module].any?{|n| line.include? n}
-  Rules = { 
-            /(\d+)/ => "\e[34m\\1\e[0m",    # Num
-            /(:[a-zA-Z_][a-zA-Z_\d]*)/ => "\e[33m\\1\e[0m",   # symbol
-            /(true|false|nil)/ => "\e[96m\\1\e[0m",           # bool, nil
-            /(for|while|if|end|case|when|class|module)/ => "\e[32m\\1\e[0m",  # keyword
-            /((?:'(?:[^']|\\')*')|(?:"(?:[^"]|\\')*"))/ => "\e[31m\\1\e[0m",  # string
+  Rules = { # fixme "JI:JI1+2+3#{1+2}"
+            #Num
+            /(\d+)/ => "\e[94m\\1\e[0m",
+            # symbol
+            /:(['"]?)((?:(?:[a-zA-Z_][a-zA-Z_\d]*)|(?:(?:[^']|\\')*|(?:[^"]|\\')*))\??)\1/ => "\e[33m:\e[93m\\1\e[33m\\2\e[93\\1\e[0m",   
+            # bool, nil
+            /(true|false|nil)/ => "\e[96m\\1\e[0m",           
+            # keyword
+            /(for|while|if|end|case|when|class|module|then)/ => "\e[32m\\1\e[0m",  
+            # string
+            /(['"])((?:[^']|\\')*|(?:[^"]|\\')*)\1/ => "\e[91m\\1\e[31m\\2\e[0m\e[91m\\1\e[0m",  
           }
   def coloring(line)
     Rules.inject(line){|o,(k,v)|
+      #$debug.p 
       o.gsub(k,v)
     }
   end
@@ -71,6 +77,8 @@ end
 class RBShell
   include RubyOrShell
 
+  TAB=2
+
   class << RBShell
     attr_accessor :master
   end
@@ -94,10 +102,11 @@ class RBShell
   end
 
   def evaluate(code)
+    #$debug.puts "run: #{code.inspect}"
     begin
       print "\n\r"
       out = eval(@code, @binding)
-      print "\r=>#{out.inspect.gsub("\n", "\r\n")}\r\n"
+      print "\r=>#{Terminal.coloring(out.inspect.gsub("\n", "\r\n"))}\r\n"
     rescue Exception => e
       print "\r"
       puts e.message
@@ -107,7 +116,7 @@ class RBShell
   end
 
   # string -> bool
-  # returns if complete ruby expression?
+  # returns if "end" given?
   def input_line(line)      
     @code += @line + "\n"
 
@@ -118,14 +127,11 @@ class RBShell
       end
     elsif _end?(line)
       @indent -= 1
+      return 1
     end
 
-    if @indent == 0 then
-      evaluate(@code)
-      return true
-    else
-      return false
-    end
+    return 0
+
   end
 
   def launch
@@ -154,6 +160,33 @@ class RBShell
           break if (c.bytesize == 0) 
 
           #p c
+
+          if @indent > 0 then
+            if c == "\r"
+              #$debug.p @indent
+              $stdout.write "\b\e[K"*(@line.size)
+              $stdout.write "\b\e[K"*TAB*input_line(@line.strip)
+              $stdout.write(Terminal.coloring(@line))
+              #$debug.p @indent
+              if @indent > 0 then
+                $stdout.write("\n\r> #{' '*TAB*@indent}")
+              else
+                evaluate(@code)
+              end
+              @line = ""
+            elsif c == "\u007F"  # Delete
+              if @line != ""
+                $stdout.write "\b\e[K"
+                @line.chop!
+              end
+            else
+              $stdout.print c
+              @line += c
+            end
+
+            next if @indent > 0
+          end
+
           if c.ord == 127 then
             @line.chop!
             #$stdout.write(0x08.chr)
@@ -161,17 +194,20 @@ class RBShell
             #ignore
           elsif c == "\r" then
             $debug.p @line
-            unless $debug.p(t = possibly_system_command?(@line.strip)) then 
-              $stdout.sync = true
+            unless possibly_system_command?(@line.strip) then 
+              #$stdout.sync = true
 
               @output = false
               @master.write(0x15.chr)
               sleep 0.001   # fixme
               @output = true
               $stdout.write "\b\e[K"*@line.size
-              $stdout.write("\n\r> " + Terminal.coloring(@line))
+              $stdout.write("\n\r> #{' '*TAB*@indent}" + Terminal.coloring(@line))
               # possiby ruby exp
-              input_line(@line.strip)
+              input_line(@line.strip) 
+              evaluate(@code) if @indent == 0
+
+              $stdout.write("\n\r> #{' '*TAB*@indent}") if @indent > 0
             end
             @line = ""
 
@@ -184,7 +220,7 @@ class RBShell
             @line += c
           end
 
-          break if(@master.write(c) != c.bytesize) 
+          break if(@master.write(c) != c.bytesize) if @indent == 0
         end
         exit(0)
       }
